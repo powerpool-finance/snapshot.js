@@ -316,6 +316,7 @@ async function cvpMiningLP(
   const poolLength = await call(provider, abi, [options.mining, 'poolLength', []]).then(l => parseInt(l.toString()));
   const poolsCalls = [];
   for (let i = 0; i < poolLength; i++) {
+    // @ts-ignore
     poolsCalls.push([options.mining, 'pools', [i]]);
   }
   const pools = await multicall(network, provider, abi, poolsCalls, { blockTag });
