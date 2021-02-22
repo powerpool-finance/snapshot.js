@@ -4295,6 +4295,7 @@ function cvpMiningLP(network, provider, addresses, options, snapshot) {
                     poolLength = _a.sent();
                     poolsCalls = [];
                     for (i = 0; i < poolLength; i++) {
+                        // @ts-ignore
                         poolsCalls.push([options.mining, 'pools', [i]]);
                     }
                     return [4 /*yield*/, multicall(network, provider, abi$i, poolsCalls, { blockTag: blockTag })];
