@@ -1,6 +1,6 @@
-import { formatUnits, parseUnits } from '@ethersproject/units';
-import { getBlockNumber } from '../../utils/web3';
-import { multicall, call } from '../../utils';
+import {formatUnits, parseUnits} from '@ethersproject/units';
+import {getBlockNumber} from '../../utils/web3';
+import {multicall, call} from '../../utils';
 
 export const author = 'powerpool';
 export const version = '0.1.0';
@@ -16,7 +16,7 @@ const abi = [
       }
     ],
     name: 'balanceOf',
-    outputs: [{ internalType: 'uint256', name: '', type: 'uint256' }],
+    outputs: [{internalType: 'uint256', name: '', type: 'uint256'}],
     payable: false,
     stateMutability: 'view',
     type: 'function'
@@ -229,6 +229,21 @@ const abi = [
     "type": "function",
     "signature": "0x5e6a1dd8"
   },
+  {
+    "inputs": [{"internalType": "uint256", "name": "", "type": "uint256"}, {
+      "internalType": "address",
+      "name": "",
+      "type": "address"
+    }],
+    "name": "usersPoolBoost",
+    "outputs": [{"internalType": "uint256", "name": "balance", "type": "uint256"}, {
+      "internalType": "uint32",
+      "name": "lastUpdateBlock",
+      "type": "uint32"
+    }],
+    "stateMutability": "view",
+    "type": "function"
+  }
 ];
 
 export async function strategy(
@@ -281,9 +296,9 @@ async function cvpVestingOf(network, provider, addresses, options, snapshot) {
     [address]
   ]);
 
-  const members = await multicall(network, provider, abi, calls, { blockTag });
+  const members = await multicall(network, provider, abi, calls, {blockTag});
   return Object.fromEntries(
-    addresses.map((address, i) =>  [address, members[i].active ? currentVotesAmount : 0])
+    addresses.map((address, i) => [address, members[i].active ? currentVotesAmount : 0])
   );
 }
 
@@ -296,7 +311,7 @@ async function cvpBalanceOf(network, provider, addresses, options, snapshot) {
     [address]
   ]);
 
-  const balances = await multicall(network, provider, abi, calls, { blockTag });
+  const balances = await multicall(network, provider, abi, calls, {blockTag});
   return Object.fromEntries(
     addresses.map((address, i) => {
       return [address, parseFloat(formatUnits(balances[i].toString()))];
@@ -316,10 +331,13 @@ async function cvpMiningLP(
   const poolLength = await call(provider, abi, [options.mining, 'poolLength', []]).then(l => parseInt(l.toString()));
   const poolsCalls = [];
   for (let i = 0; i < poolLength; i++) {
+    if (i > 11) {
+      break;
+    }
     // @ts-ignore
     poolsCalls.push([options.mining, 'pools', [i]]);
   }
-  const pools = await multicall(network, provider, abi, poolsCalls, { blockTag });
+  const pools = await multicall(network, provider, abi, poolsCalls, {blockTag});
 
   const votesByAddress = {};
   const votesPools = pools.map((p, i) => ({pid: i, token: p.lpToken}));
@@ -342,9 +360,14 @@ async function cvpMiningLP(
           options.mining,
           'users',
           [pool.pid, address]
+        ]),
+        ...addresses.map((address: any) => [
+          options.mining,
+          'usersPoolBoost',
+          [pool.pid, address]
         ])
       ],
-      { blockTag }
+      {blockTag}
     );
 
     const cvpPerLP = parseUnits(response[0][0].toString(), 18).div(response[1][0]);
@@ -354,14 +377,20 @@ async function cvpMiningLP(
       addresses.length + 2,
       addresses.length * 2 + 2
     );
+    const boostUserInfo = response.slice(
+      addresses.length * 2 + 2,
+      addresses.length * 3 + 2
+    );
 
     addresses.forEach((a, k) => {
       const lpBalance = lpBalances[k][0].add(stakedUserInfo[k]['lptAmount']);
-      const cvpLpBalance = lpBalance
+      let cvpLpBalance = lpBalance
         .mul(cvpPerLP)
         .div(parseUnits('1', 18));
 
-      if(!votesByAddress[a]) {
+      cvpLpBalance = cvpLpBalance.add(boostUserInfo[k]['balance'])
+
+      if (!votesByAddress[a]) {
         votesByAddress[a] = 0;
       }
       votesByAddress[a] += parseFloat(formatUnits(cvpLpBalance, 18));
