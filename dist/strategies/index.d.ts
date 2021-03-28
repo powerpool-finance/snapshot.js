@@ -45,11 +45,14 @@ import { strategy as ticket } from './ticket';
 import { strategy as work } from './work';
 import { strategy as ticketValidity } from './ticket-validity';
 import { strategy as opium } from './opium';
+import { strategy as ocean } from './ocean-marketplace';
 import { strategy as theGraphBalance } from './the-graph-balance';
 import { strategy as theGraphDelegation } from './the-graph-delegation';
 import { strategy as theGraphIndexing } from './the-graph-indexing';
 import { strategy as whitelist } from './whitelist';
 import { strategy as powerpool } from './powerpool';
+import { strategy as tokenlon } from './tokenlon';
+import { strategy as rebased } from './rebased';
 declare const _default: {
     balancer: typeof balancer;
     'erc20-received': typeof erc20Received;
@@ -98,10 +101,13 @@ declare const _default: {
     work: typeof work;
     'ticket-validity': typeof ticketValidity;
     opium: typeof opium;
+    'ocean-marketplace': typeof ocean;
     'the-graph-balance': typeof theGraphBalance;
     'the-graph-delegation': typeof theGraphDelegation;
     'the-graph-indexing': typeof theGraphIndexing;
     whitelist: typeof whitelist;
     powerpool: typeof powerpool;
+    tokenlon: typeof tokenlon;
+    rebased: typeof rebased;
 };
 export default _default;

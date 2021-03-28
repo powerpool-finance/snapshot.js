@@ -9,6 +9,9 @@ declare const _default: {
                 minLength: number;
                 maxLength: number;
             };
+            private: {
+                type: string;
+            };
             network: {
                 type: string;
                 title: string;

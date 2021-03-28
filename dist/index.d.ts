@@ -51,11 +51,14 @@ declare const _default: {
         work: typeof import("./strategies/work").strategy;
         'ticket-validity': typeof import("./strategies/ticket-validity").strategy;
         opium: typeof import("./strategies/opium").strategy;
+        'ocean-marketplace': typeof import("./strategies/ocean-marketplace").strategy;
         'the-graph-balance': typeof import("./strategies/the-graph-balance").strategy;
         'the-graph-delegation': typeof import("./strategies/the-graph-delegation").strategy;
         'the-graph-indexing': typeof import("./strategies/the-graph-indexing").strategy;
         whitelist: typeof import("./strategies/whitelist").strategy;
         powerpool: typeof import("./strategies/powerpool").strategy;
+        tokenlon: typeof import("./strategies/tokenlon").strategy;
+        rebased: typeof import("./strategies/rebased").strategy;
     };
     schemas: {
         space: {
@@ -67,6 +70,9 @@ declare const _default: {
                     title: string;
                     minLength: number;
                     maxLength: number;
+                };
+                private: {
+                    type: string;
                 };
                 network: {
                     type: string;

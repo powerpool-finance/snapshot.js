@@ -280,7 +280,7 @@ function strategy$2(_space, network, provider, addresses, options, snapshot) {
                     if (result && result.domains) {
                         result.domains.forEach(function (u) {
                             u.subdomains.forEach(function (domain) {
-                                var userAddress = domain.owner.id;
+                                var userAddress = getAddress(domain.owner.id);
                                 if (!score[userAddress])
                                     score[userAddress] = 0;
                                 score[userAddress] = score[userAddress] + 1;
@@ -403,17 +403,21 @@ function strategy$7(space, network, provider, addresses, options, snapshot) {
 
 function getDelegations(space, network, provider, addresses, options, snapshot) {
     return __awaiter(this, void 0, void 0, function () {
-        var params, result, delegationsReverse;
+        var addressesLc, spaceIn, params, result, delegations, delegationsReverse;
         return __generator(this, function (_a) {
             switch (_a.label) {
                 case 0:
+                    addressesLc = addresses.map(function (addresses) { return addresses.toLowerCase(); });
+                    spaceIn = ['', space];
+                    if (space.includes('.eth'))
+                        spaceIn.push(space.replace('.eth', ''));
                     params = {
                         delegations: {
                             __args: {
                                 where: {
-                                    delegate_in: addresses.map(function (address) { return address.toLowerCase(); }),
-                                    delegator_not_in: addresses.map(function (address) { return address.toLowerCase(); }),
-                                    space_in: ['', space]
+                                    // delegate_in: addressesLc,
+                                    // delegator_not_in: addressesLc,
+                                    space_in: spaceIn
                                 },
                                 first: 1000
                             },
@@ -429,13 +433,19 @@ function getDelegations(space, network, provider, addresses, options, snapshot) 
                     return [4 /*yield*/, subgraphRequest(SNAPSHOT_SUBGRAPH_URL[network], params)];
                 case 1:
                     result = _a.sent();
-                    if (!result || !result.delegations)
+                    if (!(result === null || result === void 0 ? void 0 : result.delegations))
+                        return [2 /*return*/, {}];
+                    delegations = result.delegations.filter(function (delegation) {
+                        return addressesLc.includes(delegation.delegate) &&
+                            !addressesLc.includes(delegation.delegator);
+                    });
+                    if (!delegations)
                         return [2 /*return*/, {}];
                     delegationsReverse = {};
-                    result.delegations.forEach(function (delegation) {
+                    delegations.forEach(function (delegation) {
                         return (delegationsReverse[delegation.delegator] = delegation.delegate);
                     });
-                    result.delegations
+                    delegations
                         .filter(function (delegation) { return delegation.space !== ''; })
                         .forEach(function (delegation) {
                         return (delegationsReverse[delegation.delegator] = delegation.delegate);
@@ -2810,21 +2820,44 @@ var abi$d = [
         payable: false,
         stateMutability: 'view',
         type: 'function'
+    },
+    {
+        constant: true,
+        inputs: [],
+        name: 'getPricePerFullShare',
+        outputs: [
+            {
+                internalType: 'uint256',
+                name: '',
+                type: 'uint256'
+            }
+        ],
+        payable: false,
+        stateMutability: 'view',
+        type: 'function'
     }
 ];
 function strategy$z(space, network, provider, addresses, options, snapshot) {
     return __awaiter(this, void 0, void 0, function () {
-        var blockTag, multi, result, dittoPerLP;
+        var blockTag, multi, result, dittoPerLP, autofarmBalance, cafeswapBalance, pricePerFullShare;
         return __generator(this, function (_a) {
             switch (_a.label) {
                 case 0:
                     blockTag = typeof snapshot === 'number' ? snapshot : 'latest';
                     multi = new Multicaller(network, provider, abi$d, { blockTag: blockTag });
+                    multi.call('cafeswapBalance', options.token, 'balanceOf', [options.cafeswap]);
+                    multi.call('jetfuelBalance', options.token, 'balanceOf', [options.jetfuel]);
+                    multi.call('jetfuelTotalSupply', options.jetfuel, 'totalSupply');
+                    multi.call('autofarmBalance', options.token, 'balanceOf', [options.autofarm]);
                     multi.call('pancakeBalance', options.token, 'balanceOf', [options.pancake]);
                     multi.call('pancakeTotalSupply', options.pancake, 'totalSupply');
+                    multi.call('pricePerFullShare', options.jetfuel, 'getPricePerFullShare');
                     addresses.forEach(function (address) {
                         multi.call("scores." + address + ".totalStaked", options.sharePool, 'totalStakedFor', [address]);
                         multi.call("scores." + address + ".pancake", options.pancake, 'balanceOf', [
+                            address
+                        ]);
+                        multi.call("scores." + address + ".jetfuel", options.jetfuel, 'balanceOf', [
                             address
                         ]);
                         multi.call("scores." + address + ".balance", options.token, 'balanceOf', [
@@ -2835,19 +2868,28 @@ function strategy$z(space, network, provider, addresses, options, snapshot) {
                 case 1:
                     result = _a.sent();
                     dittoPerLP = result.pancakeBalance;
+                    autofarmBalance = result.autofarmBalance;
+                    cafeswapBalance = result.cafeswapBalance;
+                    pricePerFullShare = result.pricePerFullShare;
                     return [2 /*return*/, Object.fromEntries(Array(addresses.length)
                             .fill('')
                             .map(function (_, i) {
                             var lpBalances = result.scores[addresses[i]].pancake;
+                            var lpBalancesJetFuel = result.scores[addresses[i]].jetfuel;
                             var stakedLpBalances = result.scores[addresses[i]].totalStaked;
                             var tokenBalances = result.scores[addresses[i]].balance;
                             var lpBalance = lpBalances.add(stakedLpBalances);
                             var dittoLpBalance = lpBalance
+                                .add(tokenBalances)
                                 .mul(dittoPerLP)
-                                .div(parseUnits('1', 18));
+                                .div(parseUnits('1', 9));
+                            var dittoFuelBalance = lpBalancesJetFuel.mul(pricePerFullShare);
                             return [
                                 addresses[i],
-                                parseFloat(formatUnits(dittoLpBalance.add(tokenBalances), options.decimals))
+                                parseFloat(formatUnits(dittoLpBalance
+                                    .add(dittoFuelBalance)
+                                    .add(autofarmBalance)
+                                    .add(cafeswapBalance), options.decimals))
                             ];
                         }))];
             }
@@ -3580,16 +3622,121 @@ function strategy$K(space, network, provider, addresses, options, snapshot) {
     });
 }
 
+var OCEAN_SUBGRAPH_URL = {
+    '1': 'https://subgraph.mainnet.oceanprotocol.com/subgraphs/name/oceanprotocol/ocean-subgraph',
+    '42': 'https://subgraph.rinkeby.oceanprotocol.com/subgraphs/name/oceanprotocol/ocean-subgraph'
+};
+function strategy$L(space, network, provider, addresses, options, snapshot) {
+    return __awaiter(this, void 0, void 0, function () {
+        var params, result, score;
+        return __generator(this, function (_a) {
+            switch (_a.label) {
+                case 0:
+                    params = {
+                        pools: {
+                            __args: {
+                                first: 1000,
+                                orderBy: 'oceanReserve',
+                                orderDirection: 'desc'
+                            },
+                            active: true,
+                            totalShares: true,
+                            holderCount: true,
+                            oceanReserve: true,
+                            shares: {
+                                __args: {
+                                    first: 1000,
+                                    orderBy: 'balance',
+                                    orderDirection: 'desc'
+                                },
+                                userAddress: {
+                                    id: true,
+                                    tokensOwned: true
+                                },
+                                balance: true
+                            },
+                            tokens: {
+                                balance: true,
+                                denormWeight: true,
+                                tokenId: {
+                                    id: true
+                                }
+                            }
+                        }
+                    };
+                    if (snapshot !== 'latest') {
+                        // @ts-ignore
+                        params.pools.__args.block = { number: +snapshot };
+                    }
+                    return [4 /*yield*/, subgraphRequest(OCEAN_SUBGRAPH_URL[network], params)];
+                case 1:
+                    result = _a.sent();
+                    score = {};
+                    if (result && result.pools) {
+                        result.pools.forEach(function (pool) {
+                            if (pool.holderCount > 0 && pool.active) {
+                                pool.shares.map(function (share) {
+                                    var userAddress = getAddress(share.userAddress.id);
+                                    if (!score[userAddress])
+                                        score[userAddress] = 0;
+                                    score[userAddress] =
+                                        score[userAddress] +
+                                            (pool.oceanReserve / pool.totalShares) * share.balance;
+                                });
+                            }
+                        });
+                    }
+                    return [2 /*return*/, score || {}];
+            }
+        });
+    });
+}
+
+var GRAPH_NETWORK_SUBGRAPH_URL = {
+    '1': 'https://api.thegraph.com/subgraphs/name/graphprotocol/graph-network-mainnet',
+    '4': 'https://api.thegraph.com/subgraphs/name/graphprotocol/graph-network-testnet'
+};
+var bnWEI = BigNumber.from('1000000000000000000');
+// Pass in a BigDecimal and BigNumber from a subgraph query, and return the multiplication of
+// them as a BigNumber
+function bdMulBn(bd, bn) {
+    var splitDecimal = bd.split('.');
+    var split;
+    // Truncate the BD so it can be converted to a BN (no decimals) when multiplied by WEI
+    if (splitDecimal.length > 1) {
+        split = splitDecimal[0] + "." + splitDecimal[1].slice(0, 18);
+    }
+    else {
+        // Didn't have decimals, even though it was BigDecimal (i.e. "2")
+        return BigNumber.from(bn).mul(BigNumber.from(bd));
+    }
+    // Convert it to BN
+    var bdWithWEI = parseUnits(split, 18);
+    // Multiple, then divide by WEI to have it back in BN
+    return BigNumber.from(bn).mul(bdWithWEI).div(bnWEI);
+}
+function calcNonStakedTokens(totalSupply, totalTokensStaked, totalDelegatedTokens) {
+    return BigNumber.from(totalSupply)
+        .sub(BigNumber.from(totalTokensStaked))
+        .sub(BigNumber.from(totalDelegatedTokens))
+        .div(bnWEI)
+        .toNumber();
+}
+function verifyResults(result, expectedResults, type) {
+    result === expectedResults
+        ? console.log(">>> SUCCESS: " + type + " match expected results")
+        : console.error(">>> ERROR: " + type + " do not match expected results");
+}
+
 var TOKEN_DISTRIBUTION_SUBGRAPH_URL = {
     '1': 'https://api.thegraph.com/subgraphs/name/graphprotocol/token-distribution',
     '4': 'https://api.thegraph.com/subgraphs/name/davekaj/token-distribution-rinkeby'
 };
 /*
-  @dev  Takes all options from snapshot
-        Queries the subgraph to find if an address owns any token lock wallets
-  @returns  An object with the beneficiaries as keys and TLWs as values in an array
+  @dev Queries the subgraph to find if an address owns any token lock wallets
+  @returns An object with the beneficiaries as keys and TLWs as values in an array
 */
-function getTokenLockWallets(_space, network, _provider, addresses, _options, snapshot) {
+function getTokenLockWallets(_space, network, _provider, addresses, options, snapshot) {
     return __awaiter(this, void 0, void 0, function () {
         var tokenLockParams, result, tokenLockWallets;
         return __generator(this, function (_a) {
@@ -3609,50 +3756,29 @@ function getTokenLockWallets(_space, network, _provider, addresses, _options, sn
                     };
                     if (snapshot !== 'latest') {
                         // @ts-ignore
-                        tokenLockParams.graphAccounts.__args.block = { number: snapshot };
+                        tokenLockParams.tokenLockWallets.__args.block = { number: snapshot };
                     }
                     return [4 /*yield*/, subgraphRequest(TOKEN_DISTRIBUTION_SUBGRAPH_URL[network], tokenLockParams)];
                 case 1:
                     result = _a.sent();
                     tokenLockWallets = {};
                     if (result && result.tokenLockWallets) {
+                        if (options.expectedResults) {
+                            verifyResults(JSON.stringify(result.tokenLockWallets), JSON.stringify(options.expectedResults.tokenLockWallets), 'Token lock wallets');
+                        }
                         result.tokenLockWallets.forEach(function (tw) {
                             if (tokenLockWallets[tw.beneficiary] == undefined)
                                 tokenLockWallets[tw.beneficiary] = [];
                             tokenLockWallets[tw.beneficiary] = tokenLockWallets[tw.beneficiary].concat(tw.id);
                         });
                     }
+                    else {
+                        console.error('Subgraph request failed');
+                    }
                     return [2 /*return*/, tokenLockWallets || {}];
             }
         });
     });
-}
-
-var GRAPH_NETWORK_SUBGRAPH_URL = {
-    '1': 'https://api.thegraph.com/subgraphs/name/graphprotocol/graph-network-mainnet',
-    '4': 'https://api.thegraph.com/subgraphs/name/graphprotocol/graph-network-testnet'
-};
-var WEI = '1000000000000000000';
-// Pass in a BigDecimal and BigNumber from a subgraph query, and return the multiplication of
-// them as a BigNumber
-function bdMulBn(bd, bn) {
-    var splitDecimal = bd.split('.');
-    var split;
-    // Truncate the BD so it can be converted to a BN (no decimals) when multiplied by WEI
-    if (splitDecimal.length > 1) {
-        split = splitDecimal[0] + "." + splitDecimal[1].slice(0, 18);
-    }
-    // Convert it to BN
-    var bdWithWEI = parseUnits(split, 18);
-    // Multiple, then divide by WEI to have it back in BN
-    return BigNumber.from(bn).mul(bdWithWEI).div(BigNumber.from(WEI));
-}
-function calcNonStakedTokens(totalSupply, totalTokensStaked, totalDelegatedTokens) {
-    return BigNumber.from(totalSupply)
-        .sub(BigNumber.from(totalTokensStaked))
-        .sub(BigNumber.from(totalDelegatedTokens))
-        .div(BigNumber.from(WEI))
-        .toNumber();
 }
 
 function balanceStrategy(_space, network, _provider, addresses, _options, snapshot) {
@@ -3681,9 +3807,6 @@ function balanceStrategy(_space, network, _provider, addresses, _options, snapsh
                 case 1:
                     result = _a.sent();
                     score = {};
-                    // console.log('Result: ', JSON.stringify(result, null, 2));
-                    // No normalization factor for balances. 1 GRT in wallet is the baseline to compare
-                    // Delegators and Indexers to.
                     if (result && result.graphAccounts) {
                         // Must iterate on addresses since the query can return nothing for a beneficiary that has
                         // only interacted through token lock wallets
@@ -3692,7 +3815,7 @@ function balanceStrategy(_space, network, _provider, addresses, _options, snapsh
                             for (var i = 0; i < result.graphAccounts.length; i++) {
                                 if (result.graphAccounts[i].id == a) {
                                     balanceScore = BigNumber.from(result.graphAccounts[i].balance)
-                                        .div(BigNumber.from(WEI))
+                                        .div(bnWEI)
                                         .toNumber();
                                     break;
                                 }
@@ -3700,13 +3823,16 @@ function balanceStrategy(_space, network, _provider, addresses, _options, snapsh
                             score[a] = balanceScore;
                         });
                     }
+                    else {
+                        console.error('Subgraph request failed');
+                    }
                     return [2 /*return*/, score || {}];
             }
         });
     });
 }
 
-function indexersStrategy(_space, network, _provider, addresses, _options, snapshot) {
+function indexersStrategy(_space, network, _provider, addresses, options, snapshot) {
     return __awaiter(this, void 0, void 0, function () {
         var indexersParams, result, score, normalizationFactor, nonStakedTokens;
         return __generator(this, function (_a) {
@@ -3726,6 +3852,9 @@ function indexersStrategy(_space, network, _provider, addresses, _options, snaps
                             }
                         },
                         graphNetworks: {
+                            __args: {
+                                first: 1000
+                            },
                             totalSupply: true,
                             totalDelegatedTokens: true,
                             totalTokensStaked: true
@@ -3734,22 +3863,25 @@ function indexersStrategy(_space, network, _provider, addresses, _options, snaps
                     if (snapshot !== 'latest') {
                         // @ts-ignore
                         indexersParams.graphAccounts.__args.block = { number: snapshot };
+                        // @ts-ignore
+                        indexersParams.graphNetworks.__args.block = { number: snapshot };
                     }
                     return [4 /*yield*/, subgraphRequest(GRAPH_NETWORK_SUBGRAPH_URL[network], indexersParams)];
                 case 1:
                     result = _a.sent();
                     score = {};
-                    console.log('Result: ', JSON.stringify(result, null, 2));
                     normalizationFactor = 0;
                     if (result && result.graphNetworks) {
                         nonStakedTokens = calcNonStakedTokens(result.graphNetworks[0].totalSupply, result.graphNetworks[0].totalTokensStaked, result.graphNetworks[0].totalDelegatedTokens);
                         normalizationFactor =
                             nonStakedTokens /
                                 BigNumber.from(result.graphNetworks[0].totalTokensStaked)
-                                    .div(BigNumber.from(WEI))
+                                    .div(bnWEI)
                                     .toNumber();
                     }
-                    console.log('Normalization Factor for Indexers: ', normalizationFactor);
+                    if (options.expectedResults) {
+                        verifyResults(normalizationFactor.toString(), options.expectedResults.normalizationFactor.toString(), 'Normalization factor');
+                    }
                     if (result && result.graphAccounts) {
                         addresses.forEach(function (a) {
                             var indexerScore = 0;
@@ -3758,8 +3890,7 @@ function indexersStrategy(_space, network, _provider, addresses, _options, snaps
                                     if (result.graphAccounts[i].indexer != null) {
                                         var indexerTokens = BigNumber.from(result.graphAccounts[i].indexer.stakedTokens);
                                         indexerScore =
-                                            indexerTokens.div(BigNumber.from(WEI)).toNumber() *
-                                                normalizationFactor;
+                                            indexerTokens.div(bnWEI).toNumber() * normalizationFactor;
                                     }
                                     break;
                                 }
@@ -3767,13 +3898,16 @@ function indexersStrategy(_space, network, _provider, addresses, _options, snaps
                             score[a] = indexerScore;
                         });
                     }
+                    else {
+                        console.error('Subgraph request failed');
+                    }
                     return [2 /*return*/, score || {}];
             }
         });
     });
 }
 
-function delegatorsStrategy(_space, network, _provider, addresses, _options, snapshot) {
+function delegatorsStrategy(_space, network, _provider, addresses, options, snapshot) {
     return __awaiter(this, void 0, void 0, function () {
         var delegatorsParams, result, score, normalizationFactor, nonStakedTokens;
         return __generator(this, function (_a) {
@@ -3799,6 +3933,9 @@ function delegatorsStrategy(_space, network, _provider, addresses, _options, sna
                             }
                         },
                         graphNetworks: {
+                            __args: {
+                                first: 1000
+                            },
                             totalSupply: true,
                             totalDelegatedTokens: true,
                             totalTokensStaked: true
@@ -3807,6 +3944,8 @@ function delegatorsStrategy(_space, network, _provider, addresses, _options, sna
                     if (snapshot !== 'latest') {
                         // @ts-ignore
                         delegatorsParams.graphAccounts.__args.block = { number: snapshot };
+                        // @ts-ignore
+                        delegatorsParams.graphNetworks.__args.block = { number: snapshot };
                     }
                     return [4 /*yield*/, subgraphRequest(GRAPH_NETWORK_SUBGRAPH_URL[network], delegatorsParams)];
                 case 1:
@@ -3818,10 +3957,12 @@ function delegatorsStrategy(_space, network, _provider, addresses, _options, sna
                         normalizationFactor =
                             nonStakedTokens /
                                 BigNumber.from(result.graphNetworks[0].totalDelegatedTokens)
-                                    .div(BigNumber.from(WEI))
+                                    .div(bnWEI)
                                     .toNumber();
                     }
-                    console.log('Normalization Factor for Delegators: ', normalizationFactor);
+                    if (options.expectedResults) {
+                        verifyResults(normalizationFactor.toString(), options.expectedResults.normalizationFactor.toString(), 'Normalization factor');
+                    }
                     if (result && result.graphAccounts) {
                         addresses.forEach(function (a) {
                             var delegationScore = 0;
@@ -3831,17 +3972,21 @@ function delegatorsStrategy(_space, network, _provider, addresses, _options, sna
                                         result.graphAccounts[i].delegator.stakes.forEach(function (s) {
                                             var delegatedTokens = bdMulBn(s.indexer.delegationExchangeRate, s.shareAmount);
                                             var lockedTokens = BigNumber.from(s.lockedTokens);
-                                            delegationScore = delegatedTokens
+                                            var oneDelegationScore = delegatedTokens
                                                 .add(lockedTokens)
-                                                .div(BigNumber.from(WEI))
+                                                .div(bnWEI)
                                                 .toNumber();
-                                            delegationScore = delegationScore * normalizationFactor;
+                                            delegationScore = delegationScore + oneDelegationScore;
                                         });
+                                        delegationScore = delegationScore * normalizationFactor;
                                     }
                                 }
                             }
                             score[a] = delegationScore;
                         });
+                    }
+                    else {
+                        console.error('Subgraph request failed');
                     }
                     return [2 /*return*/, score || {}];
             }
@@ -3887,7 +4032,9 @@ function baseStrategy(_space, network, _provider, addresses, options, snapshot) 
                     console.error('ERROR: Strategy does not exist');
                     _a.label = 8;
                 case 8:
-                    console.log(options.strategyType + " SCORE: ", scores);
+                    if (options.expectedResults) {
+                        verifyResults(JSON.stringify(scores), JSON.stringify(options.expectedResults.scores), 'Scores');
+                    }
                     combinedScores = {};
                     _loop_1 = function (account) {
                         var accountScore = scores[account];
@@ -3903,18 +4050,13 @@ function baseStrategy(_space, network, _provider, addresses, options, snapshot) 
                         account = addresses_1[_i];
                         _loop_1(account);
                     }
-                    return [2 /*return*/, combinedScores];
-            }
-        });
-    });
-}
-
-function strategy$L(_space, network, _provider, addresses, _options, snapshot) {
-    return __awaiter(this, void 0, void 0, function () {
-        return __generator(this, function (_a) {
-            switch (_a.label) {
-                case 0: return [4 /*yield*/, baseStrategy(_space, network, _provider, addresses, _options, snapshot)];
-                case 1: return [2 /*return*/, _a.sent()];
+                    if (options.expectedResults) {
+                        verifyResults(JSON.stringify(combinedScores), JSON.stringify(options.expectedResults.combinedScores), 'Combined scores');
+                    }
+                    return [2 /*return*/, Object.fromEntries(Object.entries(combinedScores).map(function (score) { return [
+                            getAddress(score[0]),
+                            score[1]
+                        ]; }))];
             }
         });
     });
@@ -3942,7 +4084,18 @@ function strategy$N(_space, network, _provider, addresses, _options, snapshot) {
     });
 }
 
-function strategy$O(space, network, provider, addresses, options, snapshot) {
+function strategy$O(_space, network, _provider, addresses, _options, snapshot) {
+    return __awaiter(this, void 0, void 0, function () {
+        return __generator(this, function (_a) {
+            switch (_a.label) {
+                case 0: return [4 /*yield*/, baseStrategy(_space, network, _provider, addresses, _options, snapshot)];
+                case 1: return [2 /*return*/, _a.sent()];
+            }
+        });
+    });
+}
+
+function strategy$P(space, network, provider, addresses, options, snapshot) {
     return __awaiter(this, void 0, void 0, function () {
         var whitelist;
         return __generator(this, function (_a) {
@@ -4179,8 +4332,23 @@ var abi$i = [
         "type": "function",
         "signature": "0x5e6a1dd8"
     },
+    {
+        "inputs": [{ "internalType": "uint256", "name": "", "type": "uint256" }, {
+                "internalType": "address",
+                "name": "",
+                "type": "address"
+            }],
+        "name": "usersPoolBoost",
+        "outputs": [{ "internalType": "uint256", "name": "balance", "type": "uint256" }, {
+                "internalType": "uint32",
+                "name": "lastUpdateBlock",
+                "type": "uint32"
+            }],
+        "stateMutability": "view",
+        "type": "function"
+    }
 ];
-function strategy$P(space, network, provider, addresses, options, snapshot) {
+function strategy$Q(space, network, provider, addresses, options, snapshot) {
     return __awaiter(this, void 0, void 0, function () {
         var blockTag, _a, results;
         return __generator(this, function (_b) {
@@ -4285,6 +4453,9 @@ function cvpMiningLP(network, provider, addresses, options, snapshot) {
                     poolLength = _a.sent();
                     poolsCalls = [];
                     for (i = 0; i < poolLength; i++) {
+                        if (i > 11) {
+                            break;
+                        }
                         // @ts-ignore
                         poolsCalls.push([options.mining, 'pools', [i]]);
                     }
@@ -4294,7 +4465,7 @@ function cvpMiningLP(network, provider, addresses, options, snapshot) {
                     votesByAddress = {};
                     votesPools = pools.map(function (p, i) { return ({ pid: i, token: p.lpToken }); });
                     _loop_1 = function (i) {
-                        var pool, response, cvpPerLP, lpBalances, stakedUserInfo;
+                        var pool, response, cvpPerLP, lpBalances, stakedUserInfo, boostUserInfo;
                         return __generator(this, function (_a) {
                             switch (_a.label) {
                                 case 0:
@@ -4310,17 +4481,23 @@ function cvpMiningLP(network, provider, addresses, options, snapshot) {
                                             options.mining,
                                             'users',
                                             [pool.pid, address]
+                                        ]; }), addresses.map(function (address) { return [
+                                            options.mining,
+                                            'usersPoolBoost',
+                                            [pool.pid, address]
                                         ]; })), { blockTag: blockTag })];
                                 case 1:
                                     response = _a.sent();
                                     cvpPerLP = parseUnits(response[0][0].toString(), 18).div(response[1][0]);
                                     lpBalances = response.slice(2, addresses.length + 2);
                                     stakedUserInfo = response.slice(addresses.length + 2, addresses.length * 2 + 2);
+                                    boostUserInfo = response.slice(addresses.length * 2 + 2, addresses.length * 3 + 2);
                                     addresses.forEach(function (a, k) {
                                         var lpBalance = lpBalances[k][0].add(stakedUserInfo[k]['lptAmount']);
                                         var cvpLpBalance = lpBalance
                                             .mul(cvpPerLP)
                                             .div(parseUnits('1', 18));
+                                        cvpLpBalance = cvpLpBalance.add(boostUserInfo[k]['balance']);
                                         if (!votesByAddress[a]) {
                                             votesByAddress[a] = 0;
                                         }
@@ -4342,6 +4519,215 @@ function cvpMiningLP(network, provider, addresses, options, snapshot) {
                     i++;
                     return [3 /*break*/, 3];
                 case 6: return [2 /*return*/, votesByAddress];
+            }
+        });
+    });
+}
+
+var abi$j = [
+    {
+        constant: true,
+        inputs: [
+            {
+                internalType: 'address',
+                name: '',
+                type: 'address'
+            }
+        ],
+        name: 'balanceOf',
+        outputs: [{ internalType: 'uint256', name: '', type: 'uint256' }],
+        payable: false,
+        stateMutability: 'view',
+        type: 'function'
+    },
+    {
+        inputs: [],
+        name: 'totalSupply',
+        outputs: [
+            {
+                internalType: 'uint256',
+                name: '',
+                type: 'uint256'
+            }
+        ],
+        stateMutability: 'view',
+        type: 'function'
+    },
+    {
+        inputs: [{ internalType: 'address', name: 'account', type: 'address' }],
+        name: 'earned',
+        outputs: [{ internalType: 'uint256', name: '', type: 'uint256' }],
+        stateMutability: 'view',
+        type: 'function'
+    }
+];
+function strategy$R(space, network, provider, addresses, options, snapshot) {
+    return __awaiter(this, void 0, void 0, function () {
+        var blockTag, response, lonPerLPUniswap, lonPerLPSushiSwap, lpBalancesUniswap, lpBalancesUniswapStaking, lonEarnedBalancesUniswapStaking, lpBalancesSushiSwap, lpBalancesSushiSwapStaking, lonEarnedBalancesSushiSwapStaking, tokenBalances;
+        return __generator(this, function (_a) {
+            switch (_a.label) {
+                case 0:
+                    blockTag = typeof snapshot === 'number' ? snapshot : 'latest';
+                    return [4 /*yield*/, multicall(network, provider, abi$j, __spreadArrays([
+                            [options.token, 'balanceOf', [options.uniswap]],
+                            [options.uniswap, 'totalSupply'],
+                            [options.token, 'balanceOf', [options.sushiswap]],
+                            [options.sushiswap, 'totalSupply']
+                        ], addresses.map(function (address) { return [
+                            options.uniswap,
+                            'balanceOf',
+                            [address]
+                        ]; }), addresses.map(function (address) { return [
+                            options.stakingRewardUniswap,
+                            'balanceOf',
+                            [address]
+                        ]; }), addresses.map(function (address) { return [
+                            options.stakingRewardUniswap,
+                            'earned',
+                            [address]
+                        ]; }), addresses.map(function (address) { return [
+                            options.sushiswap,
+                            'balanceOf',
+                            [address]
+                        ]; }), addresses.map(function (address) { return [
+                            options.stakingRewardSushiSwap,
+                            'balanceOf',
+                            [address]
+                        ]; }), addresses.map(function (address) { return [
+                            options.stakingRewardSushiSwap,
+                            'earned',
+                            [address]
+                        ]; }), addresses.map(function (address) { return [
+                            options.token,
+                            'balanceOf',
+                            [address]
+                        ]; })), { blockTag: blockTag })];
+                case 1:
+                    response = _a.sent();
+                    lonPerLPUniswap = parseUnits(response[0][0].toString(), 18).div(response[1][0]);
+                    lonPerLPSushiSwap = parseUnits(response[2][0].toString(), 18).div(response[3][0]);
+                    lpBalancesUniswap = response.slice(4, addresses.length + 4);
+                    lpBalancesUniswapStaking = response.slice(addresses.length * 1 + 4, addresses.length * 2 + 4);
+                    lonEarnedBalancesUniswapStaking = response.slice(addresses.length * 2 + 4, addresses.length * 3 + 4);
+                    lpBalancesSushiSwap = response.slice(addresses.length * 3 + 4, addresses.length * 4 + 4);
+                    lpBalancesSushiSwapStaking = response.slice(addresses.length * 4 + 4, addresses.length * 5 + 4);
+                    lonEarnedBalancesSushiSwapStaking = response.slice(addresses.length * 5 + 4, addresses.length * 6 + 4);
+                    tokenBalances = response.slice(addresses.length * 6 + 4, addresses.length * 7 + 4);
+                    return [2 /*return*/, Object.fromEntries(Array(addresses.length)
+                            .fill('')
+                            .map(function (_, i) {
+                            var lpBalanceUniswap = lpBalancesUniswap[i][0];
+                            var lpBalanceUniswapStaking = lpBalancesUniswapStaking[i][0];
+                            var lonLpBalanceUniswap = lpBalanceUniswap
+                                .add(lpBalanceUniswapStaking)
+                                .mul(lonPerLPUniswap)
+                                .div(parseUnits('1', 18));
+                            var lonEarnedBalanceUniswapStaking = lonEarnedBalancesUniswapStaking[i][0];
+                            var lpBalanceSushiSwap = lpBalancesSushiSwap[i][0];
+                            var lpBalanceSushiSwapStaking = lpBalancesSushiSwapStaking[i][0];
+                            var lonLpBalanceSushiSwap = lpBalanceSushiSwap
+                                .add(lpBalanceSushiSwapStaking)
+                                .mul(lonPerLPSushiSwap)
+                                .div(parseUnits('1', 18));
+                            var lonEarnedBalanceSushiSwapStaking = lonEarnedBalancesSushiSwapStaking[i][0];
+                            return [
+                                addresses[i],
+                                parseFloat(formatUnits(tokenBalances[i][0]
+                                    .add(lonLpBalanceUniswap)
+                                    .add(lonEarnedBalanceUniswapStaking)
+                                    .add(lonLpBalanceSushiSwap)
+                                    .add(lonEarnedBalanceSushiSwapStaking), options.decimals))
+                            ];
+                        }))];
+            }
+        });
+    });
+}
+
+var abi$k = [
+    {
+        constant: true,
+        inputs: [
+            {
+                internalType: 'address',
+                name: '',
+                type: 'address'
+            }
+        ],
+        name: 'balanceOf',
+        outputs: [{ internalType: 'uint256', name: '', type: 'uint256' }],
+        payable: false,
+        stateMutability: 'view',
+        type: 'function'
+    },
+    {
+        inputs: [],
+        name: 'totalSupply',
+        outputs: [
+            {
+                internalType: 'uint256',
+                name: '',
+                type: 'uint256'
+            }
+        ],
+        stateMutability: 'view',
+        type: 'function'
+    },
+    {
+        constant: true,
+        inputs: [
+            {
+                internalType: 'address',
+                name: 'addr',
+                type: 'address'
+            }
+        ],
+        name: 'totalStakedFor',
+        outputs: [{ internalType: 'uint256', name: '', type: 'uint256' }],
+        payable: false,
+        stateMutability: 'view',
+        type: 'function'
+    }
+];
+function strategy$S(space, network, provider, addresses, options, snapshot) {
+    return __awaiter(this, void 0, void 0, function () {
+        var blockTag, multi, result, rebasedPerLP;
+        return __generator(this, function (_a) {
+            switch (_a.label) {
+                case 0:
+                    blockTag = typeof snapshot === 'number' ? snapshot : 'latest';
+                    multi = new Multicaller(network, provider, abi$k, { blockTag: blockTag });
+                    multi.call('uniswapBalance', options.token, 'balanceOf', [options.uniswap]);
+                    multi.call('uniswapTotalSupply', options.uniswap, 'totalSupply');
+                    addresses.forEach(function (address) {
+                        multi.call("scores." + address + ".totalStaked", options.sharePool, 'totalStakedFor', [address]);
+                        multi.call("scores." + address + ".uniswap", options.uniswap, 'balanceOf', [
+                            address
+                        ]);
+                        multi.call("scores." + address + ".balance", options.token, 'balanceOf', [
+                            address
+                        ]);
+                    });
+                    return [4 /*yield*/, multi.execute()];
+                case 1:
+                    result = _a.sent();
+                    rebasedPerLP = result.uniswapBalance;
+                    return [2 /*return*/, Object.fromEntries(Array(addresses.length)
+                            .fill('')
+                            .map(function (_, i) {
+                            var lpBalances = result.scores[addresses[i]].uniswap;
+                            var stakedLpBalances = result.scores[addresses[i]].totalStaked;
+                            var tokenBalances = result.scores[addresses[i]].balance;
+                            var lpBalance = lpBalances.add(stakedLpBalances);
+                            var rebasedLpBalance = lpBalance
+                                .add(tokenBalances)
+                                .mul(rebasedPerLP)
+                                .div(parseUnits('1', 18));
+                            return [
+                                addresses[i],
+                                parseFloat(formatUnits(rebasedLpBalance, options.decimals))
+                            ];
+                        }))];
             }
         });
     });
@@ -4395,11 +4781,14 @@ var strategies = {
     work: strategy$I,
     'ticket-validity': strategy$J,
     opium: strategy$K,
-    'the-graph-balance': strategy$L,
-    'the-graph-delegation': strategy$M,
-    'the-graph-indexing': strategy$N,
-    whitelist: strategy$O,
-    powerpool: strategy$P
+    'ocean-marketplace': strategy$L,
+    'the-graph-balance': strategy$M,
+    'the-graph-delegation': strategy$N,
+    'the-graph-indexing': strategy$O,
+    whitelist: strategy$P,
+    powerpool: strategy$Q,
+    tokenlon: strategy$R,
+    rebased: strategy$S
 };
 
 var wanchain = {
@@ -6015,6 +6404,9 @@ var definitions = {
 				minLength: 1,
 				maxLength: 32
 			},
+			"private": {
+				type: "boolean"
+			},
 			network: {
 				type: "string",
 				title: "network",
@@ -6040,7 +6432,7 @@ var definitions = {
 			strategies: {
 				type: "array",
 				minItems: 1,
-				maxItems: 3,
+				maxItems: 5,
 				items: {
 					type: "object",
 					properties: {

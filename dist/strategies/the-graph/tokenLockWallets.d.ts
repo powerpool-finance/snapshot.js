@@ -5,5 +5,5 @@ export declare const TOKEN_DISTRIBUTION_SUBGRAPH_URL: {
 interface TokenLockWallets {
     [key: string]: string[];
 }
-export declare function getTokenLockWallets(_space: any, network: any, _provider: any, addresses: any, _options: any, snapshot: any): Promise<TokenLockWallets>;
+export declare function getTokenLockWallets(_space: any, network: any, _provider: any, addresses: any, options: any, snapshot: any): Promise<TokenLockWallets>;
 export {};
